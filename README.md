@@ -8,9 +8,9 @@
 [![Downloads](https://img.shields.io/npm/dt/torollo?label=downloads&style=flat-square&color=ff8c00)](https://www.npmjs.com/package/torollo)
 [![Stars](https://img.shields.io/github/stars/Derssa/Torollo?label=stars&style=flat-square&color=8b5cf6)](https://github.com/Derssa/Torollo)
 
-> **The Packet Tracer of backend engineering.** Build architectures on a canvas where every node is a real Docker container on your machine — then follow guided roadmaps that grade each step against the actual state of your system.
+> **The Packet Tracer of backend engineering.** Build architectures on a canvas where every service node is backed by a real Docker container on your machine, then follow guided roadmaps that grade each step against the state of your lab.
 
-Drawing boxes is easy; plenty of tools do it. Torollo is different in one specific way: when you draw a link, a real firewall rule is written; when you add a database, a real database starts; and when a roadmap step says *"traffic from the public subnet must not reach Postgres"*, Torollo checks it by probing your **live containers** — not by comparing your answer to a diagram. You can't bluff it, and that's the point.
+Drawing boxes is easy; plenty of tools do it. Torollo is different in one specific way: when you draw a link, Torollo applies real firewall rules; when you add a database, a real database starts. Roadmap validators query running containers for service, database, and HTTP checks. Network validators inspect the same security-group model Torollo uses to configure those containers, with a host-level check that catches unsupported inter-subnet routing. You can't pass by arranging a diagram that does nothing, and that's the point.
 
 <!-- demo GIF placeholder: roadmap validation loop (fail → fix → pass), keep above the screenshot -->
 <img width="1917" height="907" alt="torollo-example" src="https://github.com/user-attachments/assets/c80a04f1-8cc6-46fb-bf89-23a9af1a1a2d" />
@@ -77,21 +77,21 @@ Project and roadmap-progress data live in the `torollo-data` named volume. `dock
 
 ## Guided, auto-graded roadmaps
 
-The learning engine is what Torollo is really about. A roadmap is a sequence of steps — instructions, progressive hints, a solution if you're stuck — and every step is closed by **validators that assert against the real state of your lab**:
+The learning engine is what Torollo is really about. A roadmap is a sequence of steps with instructions, progressive hints, and a solution if you're stuck. Every step is closed by **validators that inspect your lab or its enforced configuration**:
 
 * container status and ASG replica counts,
-* SQL schemas and data, MongoDB collections, Redis keys,
-* network reachability and firewall restrictions between subnets,
+* PostgreSQL table existence, MongoDB collections, and Redis keys,
+* configured network reachability and firewall restrictions, with a host-level inter-subnet health check,
 * HTTP availability and response content.
 
-A green check means your architecture actually does what the step asked. A red one tells you what was expected and what was observed instead — reading that gap is where the learning happens.
+A green check means every validator for the step passed. A red one tells you what was expected and what Torollo observed instead. Reading that gap is where the learning happens.
 
 Current catalogue (English and French):
 
 | Roadmap | Difficulty | ~Time | You practice |
 |---|---|---|---|
 | Deploy a resilient three-tier app | intermediate | 40 min | Load balancing, security groups, private subnets, autoscaling |
-| Cache-aside with Redis | intermediate | 30 min | Caching strategy, TTLs, invalidation, measuring hit rates |
+| Cache-aside with Redis | intermediate | 45 min | Caching strategy, TTLs, invalidation, measuring hit rates, surviving a cache outage |
 | Workers & the Redis job queue | intermediate | 40 min | Async decoupling, queues, scaling workers under load, poison messages |
 
 **Roadmaps are plain JSON — no code.** The format is open and documented in the [Roadmap Authoring Reference](docs/roadmap-format.md); drop a valid file into `roadmaps/` — or import any roadmap file or `.zip` pack from the Learning page, no repo checkout needed ([how it works](docs/local-roadmaps.md)) — and it appears in the catalogue. Community-authored roadmaps are very welcome. The validation HTTP API is documented in [learning-api.md](docs/learning-api.md).
@@ -100,7 +100,7 @@ Current catalogue (English and French):
 
 ## What you can put on the canvas
 
-Every node maps 1:1 to a real Docker container running locally.
+Compute, data, messaging, load-balancer, and NAT nodes are backed by real Docker containers running locally. An Auto Scaling Group uses a boundary container plus the replica containers it manages. Subnets and other network boundaries map to Docker networks and firewall configuration instead.
 
 * **Compute**
     * **Ubuntu Server** — a Linux container with a native web terminal in your browser (WebSockets + xterm.js).
@@ -117,7 +117,7 @@ Every node maps 1:1 to a real Docker container running locally.
     * **Load Balancer (Nginx)** — upstream configuration generated from the nodes you wire to it.
     * **NAT Gateway** — outbound access for private subnets via real `ip_forward` and `MASQUERADE` routing.
 
-Beyond the nodes themselves: a traffic simulator to watch requests flow through your topology, root web terminals into any container, and clickable `localhost` shortcuts that appear when your firewall rules actually allow the traffic.
+Beyond the nodes themselves: a traffic simulator that previews whether the current routes and security-group rules allow a connection, browser terminals for supported container types, and clickable `localhost` shortcuts when the current public-subnet and firewall configuration exposes a service.
 
 ---
 
@@ -147,7 +147,7 @@ TOROLLO_ALLOWED_ORIGINS=http://<your-lan-ip>:23232
 
 ## Telemetry
 
-Torollo can send **anonymous, opt-in** usage events so we can see where the roadmaps lose people. **Nothing is ever sent unless you explicitly enable it** — the app asks once on the home screen, and until you answer (or if you decline) it makes zero telemetry requests.
+Torollo can send **pseudonymous, opt-in** usage events so we can see where the roadmaps lose people. **Nothing is ever sent unless you explicitly enable it.** The app asks on the home screen, and until you answer (or if you decline) it makes zero telemetry requests.
 
 If you opt in, exactly these events are sent, and nothing else:
 
@@ -165,9 +165,9 @@ If you opt in, exactly these events are sent, and nothing else:
 | `roadmap_completed` | the last remaining step of a roadmap passes | `roadmap` |
 | `roadmap_abandoned` | you leave a roadmap before finishing it | `roadmap`, `step` |
 
-Every event also carries the app version and a random install id generated locally (never derived from your machine). `roadmap` and `step` are the ids from the catalogue; `reason` and `node` are fixed codes. No personal data, no project names, no socket paths, no error messages, no container contents, no code. You can inspect every payload in your browser's network tab.
+Every event also carries the app version and a random install id generated locally (never derived from your machine). The install id remains stable across sessions until you revoke consent, so events from one installation can be grouped together. `roadmap` and `step` are the ids from the catalogue; `reason` and `node` are fixed codes. Torollo sends no project names, socket paths, error messages, container contents, code, or other user-supplied content. You can inspect every payload in your browser's network tab.
 
-**Turning it off (or on) later:** click the activity icon in the home-screen header, or clear the `torollo_telemetry_consent` key from the browser's localStorage. Revoking consent also deletes the install id (and the "first time" markers tied to it), so re-enabling later starts a fresh anonymous identity.
+**Turning it off (or on) later:** click the activity icon in the home-screen header. Turning telemetry off there deletes the install id and the "first time" markers tied to it, so re-enabling later starts with a new pseudonymous id. Clearing only the `torollo_telemetry_consent` key from the browser's localStorage resets the choice to unanswered but leaves the existing id and markers in storage.
 
 Forks and self-hosters can point events at their own [Plausible](https://plausible.io)-compatible endpoint (or disable telemetry entirely) at build time with `VITE_TELEMETRY_ENDPOINT` and `VITE_TELEMETRY_DOMAIN` (an empty `VITE_TELEMETRY_ENDPOINT` hard-disables it).
 
@@ -190,8 +190,8 @@ Forks and self-hosters can point events at their own [Plausible](https://plausib
 
 ## Philosophy
 
-Everything runs **locally**, and the core is **MIT-licensed** — that's permanent, not a launch promise.
+The application and lab infrastructure run **locally**, and the released core code is **MIT-licensed**.
 
 - No cloud credentials, no remote infrastructure created or billed.
-- Every node on the canvas corresponds exactly to a live Docker container on your machine.
+- Service nodes and Auto Scaling Group replicas correspond to Docker containers on your machine; network boundaries correspond to Docker networks and firewall configuration.
 - Torollo is educational by design: not an AWS clone, not a production orchestration tool — a lab where system design becomes tangible because it actually executes.
