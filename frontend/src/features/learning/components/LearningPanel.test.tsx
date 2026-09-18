@@ -1,6 +1,6 @@
-import '../../../i18n';
+import i18n from '../../../i18n';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, act } from '@testing-library/react';
 import LearningPanel from './LearningPanel';
 import type {
   Roadmap,
@@ -42,6 +42,27 @@ const roadmap: Roadmap = {
     },
   ],
 };
+
+const frenchSummary: RoadmapSummary = {
+  ...summaries[0],
+  title: 'Votre première architecture',
+  language: 'fr',
+};
+
+const frenchRoadmap: Roadmap = {
+  ...roadmap,
+  title: 'Votre première architecture',
+  language: 'fr',
+  steps: [
+    { ...roadmap.steps[0], title: 'Créer le serveur web' },
+    { ...roadmap.steps[1], title: 'Ajouter la base de données' },
+  ],
+};
+
+/** Serves the translation named by the `language` query param, like the backend. */
+function roadmapByLanguage(url: string): Response {
+  return jsonResponse(true, url.includes('language=fr') ? frenchRoadmap : roadmap);
+}
 
 const failResponse: StepValidationResponse = {
   roadmapId: roadmap.id,
@@ -88,7 +109,7 @@ function jsonResponse(ok: boolean, body: unknown): Response {
 /** Routes fetch calls by URL so the catalogue, roadmap, validate and progress endpoints can be scripted independently. */
 function buildFetchMock(handlers: {
   roadmaps?: () => Response;
-  roadmap?: () => Response;
+  roadmap?: (url: string) => Response;
   validate?: () => Response;
   progress?: () => Response;
   hints?: () => Response;
@@ -108,7 +129,7 @@ function buildFetchMock(handlers: {
       return Promise.resolve(handlers.progress?.() ?? jsonResponse(true, emptyProgress));
     }
     if (url.includes('/api/learning/roadmaps/')) {
-      return Promise.resolve(handlers.roadmap?.() ?? jsonResponse(true, roadmap));
+      return Promise.resolve(handlers.roadmap?.(url) ?? jsonResponse(true, roadmap));
     }
     if (url.includes('/api/learning/roadmaps')) {
       return Promise.resolve(handlers.roadmaps?.() ?? jsonResponse(true, summaries));
@@ -129,9 +150,10 @@ describe('LearningPanel', () => {
     errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     vi.unstubAllGlobals();
     errorSpy.mockRestore();
+    await i18n.changeLanguage('en');
   });
 
   it('lists the roadmap catalogue on open', async () => {
@@ -367,6 +389,62 @@ describe('LearningPanel', () => {
     expect(
       screen.queryByText(/Your saved progress could not be read and had to be reset/)
     ).not.toBeInTheDocument();
+  });
+
+  it('reopens the open roadmap in its translation when the UI language switches', async () => {
+    const fetchMock = buildFetchMock({
+      roadmaps: () => jsonResponse(true, [...summaries, frenchSummary]),
+      roadmap: roadmapByLanguage,
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    render(<LearningPanel projectId="p1" onClose={() => {}} />);
+    await openRoadmapFromCatalog();
+
+    await act(async () => {
+      await i18n.changeLanguage('fr');
+    });
+
+    expect(await screen.findByText('Créer le serveur web')).toBeInTheDocument();
+    expect(screen.queryByText('Create the web server')).not.toBeInTheDocument();
+    const urls = fetchMock.mock.calls.map(call => String(call[0]));
+    expect(urls.some(url => url.includes(`/api/learning/roadmaps/${roadmap.id}?language=fr`))).toBe(true);
+  });
+
+  it('keeps the open roadmap as is when it has no translation in the new UI language', async () => {
+    const fetchMock = buildFetchMock({});
+    vi.stubGlobal('fetch', fetchMock);
+    render(<LearningPanel projectId="p1" onClose={() => {}} />);
+    await openRoadmapFromCatalog();
+
+    await act(async () => {
+      await i18n.changeLanguage('fr');
+    });
+
+    expect(screen.getByText('Create the web server')).toBeInTheDocument();
+    const urls = fetchMock.mock.calls.map(call => String(call[0]));
+    expect(urls.some(url => url.includes('language=fr'))).toBe(false);
+  });
+
+  it('does not reload the roadmap when only the region of the UI language changes', async () => {
+    await i18n.changeLanguage('fr');
+    const fetchMock = buildFetchMock({
+      roadmaps: () => jsonResponse(true, [...summaries, frenchSummary]),
+      roadmap: roadmapByLanguage,
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    render(<LearningPanel projectId="p1" onClose={() => {}} />);
+    fireEvent.click(await screen.findByText('Votre première architecture'));
+    await screen.findByText('Créer le serveur web');
+
+    await act(async () => {
+      await i18n.changeLanguage('fr-FR');
+    });
+
+    expect(screen.getByText('Créer le serveur web')).toBeInTheDocument();
+    const roadmapFetches = fetchMock.mock.calls.filter(call =>
+      String(call[0]).includes('/api/learning/roadmaps/')
+    );
+    expect(roadmapFetches).toHaveLength(1);
   });
 
   it('calls onClose from the header button', async () => {

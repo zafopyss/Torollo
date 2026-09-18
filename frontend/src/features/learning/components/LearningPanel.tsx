@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { GraduationCap, X } from 'lucide-react';
 import { useLearningPlayer } from '../hooks/useLearningPlayer';
+import { useRoadmaps } from '../hooks/useRoadmaps';
 import RoadmapCatalog from './RoadmapCatalog';
 import RoadmapPlayer from './RoadmapPlayer';
 import type { ContainerData, LearningExit } from '../../../shared/types';
@@ -39,8 +40,29 @@ export default function LearningPanel({
     nodeSecurityGroups: {}
   } as unknown as NetworkConfig
 }: LearningPanelProps) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const player = useLearningPlayer({ projectId });
+  // Owned here rather than by the catalogue: the catalogue unmounts while a
+  // roadmap is open, and the language switch below still needs the list.
+  const roadmaps = useRoadmaps();
+  const { summaries, fetchRoadmaps } = roadmaps;
+  const { roadmap, openRoadmap } = player;
+
+  useEffect(() => {
+    fetchRoadmaps();
+  }, [fetchRoadmaps]);
+
+  // UI language switch: reopen the open roadmap in its translation when one
+  // exists. Without one (e.g. imported roadmaps) it stays as is.
+  useEffect(() => {
+    if (!roadmap) return;
+    const base = i18n.language.split('-')[0];
+    if (roadmap.language.split('-')[0] === base) return;
+    const translation = summaries.find(
+      summary => summary.id === roadmap.id && summary.language.split('-')[0] === base
+    );
+    if (translation) openRoadmap(translation);
+  }, [i18n.language, roadmap, summaries, openRoadmap]);
 
   // Arrival intent: open the requested roadmap once on mount. openRoadmap
   // hydrates persisted progress and resumes at the first incomplete step.
@@ -84,7 +106,7 @@ export default function LearningPanel({
               </div>
             )}
             {/* Single JSX position: the catalog must not remount (and refetch) when a load error appears. */}
-            <RoadmapCatalog onOpen={player.openRoadmap} />
+            <RoadmapCatalog roadmaps={roadmaps} onOpen={player.openRoadmap} />
           </>
         )}
       </div>
