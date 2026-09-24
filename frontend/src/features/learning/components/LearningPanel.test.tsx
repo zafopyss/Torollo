@@ -109,7 +109,7 @@ function jsonResponse(ok: boolean, body: unknown): Response {
 /** Routes fetch calls by URL so the catalogue, roadmap, validate and progress endpoints can be scripted independently. */
 function buildFetchMock(handlers: {
   roadmaps?: () => Response;
-  roadmap?: (url: string) => Response;
+  roadmap?: (url: string) => Response | Promise<Response>;
   validate?: () => Response;
   progress?: () => Response;
   hints?: () => Response;
@@ -136,6 +136,32 @@ function buildFetchMock(handlers: {
     }
     return Promise.reject(new Error(`Unexpected fetch: ${url}`));
   });
+}
+
+/**
+ * Stubs fetch with a French translation held in flight until the test calls
+ * `releaseTranslation`, like a slow backend.
+ */
+function stubPendingTranslation() {
+  let release!: (response: Response) => void;
+  const pending = new Promise<Response>(resolve => {
+    release = resolve;
+  });
+  const fetchMock = buildFetchMock({
+    roadmaps: () => jsonResponse(true, [...summaries, frenchSummary]),
+    roadmap: url => (url.includes('language=fr') ? pending : jsonResponse(true, roadmap)),
+  });
+  vi.stubGlobal('fetch', fetchMock);
+  return {
+    releaseTranslation: () => release(jsonResponse(true, frenchRoadmap)),
+    fetchCount: (path: string) =>
+      fetchMock.mock.calls.filter(call => String(call[0]).includes(path)).length,
+  };
+}
+
+/** Lets every already-resolved fetch chain run to completion. */
+function flushPending() {
+  return act(() => new Promise<void>(resolve => setTimeout(resolve, 0)));
 }
 
 async function openRoadmapFromCatalog() {
@@ -445,6 +471,62 @@ describe('LearningPanel', () => {
       String(call[0]).includes('/api/learning/roadmaps/')
     );
     expect(roadmapFetches).toHaveLength(1);
+  });
+
+  it('drops a pending translation when the user goes back to the catalogue', async () => {
+    const { releaseTranslation } = stubPendingTranslation();
+    render(<LearningPanel projectId="p1" onClose={() => {}} />);
+    await openRoadmapFromCatalog();
+
+    await act(async () => {
+      await i18n.changeLanguage('fr');
+    });
+    fireEvent.click(screen.getByText('Toutes les roadmaps'));
+    releaseTranslation();
+    await flushPending();
+
+    expect(screen.queryByText('Créer le serveur web')).not.toBeInTheDocument();
+    expect(screen.getByText('Votre première architecture')).toBeInTheDocument();
+  });
+
+  it('drops a pending translation when the UI language switches back', async () => {
+    const { releaseTranslation, fetchCount } = stubPendingTranslation();
+    render(<LearningPanel projectId="p1" onClose={() => {}} />);
+    await openRoadmapFromCatalog();
+
+    await act(async () => {
+      await i18n.changeLanguage('fr');
+    });
+    await act(async () => {
+      await i18n.changeLanguage('en');
+    });
+    const before = fetchCount('/api/learning/roadmaps/');
+    releaseTranslation();
+    await flushPending();
+
+    expect(screen.getByText('Create the web server')).toBeInTheDocument();
+    expect(screen.queryByText('Créer le serveur web')).not.toBeInTheDocument();
+    // A stale French result would flash in, then trigger a reload back to English.
+    expect(fetchCount('/api/learning/roadmaps/')).toBe(before);
+  });
+
+  it('drops a pending translation when the panel unmounts', async () => {
+    const { releaseTranslation, fetchCount } = stubPendingTranslation();
+    // After the roadmap itself, openRoadmap fetches its progress: a dropped
+    // load never gets that far.
+    const progressFetchCount = () => fetchCount('/api/learning/progress/');
+    const { unmount } = render(<LearningPanel projectId="p1" onClose={() => {}} />);
+    await openRoadmapFromCatalog();
+
+    await act(async () => {
+      await i18n.changeLanguage('fr');
+    });
+    const before = progressFetchCount();
+    unmount();
+    releaseTranslation();
+    await flushPending();
+
+    expect(progressFetchCount()).toBe(before);
   });
 
   it('calls onClose from the header button', async () => {

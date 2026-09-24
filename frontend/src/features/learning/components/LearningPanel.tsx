@@ -42,27 +42,30 @@ export default function LearningPanel({
 }: LearningPanelProps) {
   const { t, i18n } = useTranslation();
   const player = useLearningPlayer({ projectId });
-  // Owned here rather than by the catalogue: the catalogue unmounts while a
-  // roadmap is open, and the language switch below still needs the list.
+
   const roadmaps = useRoadmaps();
   const { summaries, fetchRoadmaps } = roadmaps;
-  const { roadmap, openRoadmap } = player;
+  const { roadmap, openRoadmap, cancelPendingOpen } = player;
 
   useEffect(() => {
     fetchRoadmaps();
   }, [fetchRoadmaps]);
 
   // UI language switch: reopen the open roadmap in its translation when one
-  // exists. Without one (e.g. imported roadmaps) it stays as is.
+  // exists. Without one it stays as is.
   useEffect(() => {
     if (!roadmap) return;
     const base = i18n.language.split('-')[0];
-    if (roadmap.language.split('-')[0] === base) return;
+    if (roadmap.language.split('-')[0] === base) {
+      // Back to the displayed language: drop any translation still loading.
+      cancelPendingOpen();
+      return;
+    }
     const translation = summaries.find(
       summary => summary.id === roadmap.id && summary.language.split('-')[0] === base
     );
     if (translation) openRoadmap(translation);
-  }, [i18n.language, roadmap, summaries, openRoadmap]);
+  }, [i18n.language, roadmap, summaries, openRoadmap, cancelPendingOpen]);
 
   // Arrival intent: open the requested roadmap once on mount. openRoadmap
   // hydrates persisted progress and resumes at the first incomplete step.
